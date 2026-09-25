@@ -1,0 +1,105 @@
+name: Build FoodCheck iOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-ios:
+    runs-on: macos-26-intel
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Show macOS and Xcode
+        run: |
+          sw_vers
+          echo "Installed Xcode versions:"
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+
+      - name: Select Xcode 26+
+        shell: bash
+        run: |
+          XCODE_APP=$(find /Applications -maxdepth 1 -type d -name 'Xcode_26*.app' | sort | tail -n 1)
+
+          if [ -z "$XCODE_APP" ]; then
+            echo "Xcode 26.x not found."
+            exit 1
+          fi
+
+          echo "Using: $XCODE_APP"
+          sudo xcode-select -s "$XCODE_APP/Contents/Developer"
+
+          xcodebuild -version
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        run: |
+          npm ci --legacy-peer-deps
+
+      - name: Generate native iOS project
+        run: |
+          npx expo prebuild --platform ios --non-interactive
+
+      - name: Install CocoaPods
+        working-directory: ios
+        run: |
+          pod install
+
+      - name: Show iOS workspace
+        working-directory: ios
+        run: |
+          ls -la
+          xcodebuild -list -workspace FoodCheck.xcworkspace
+
+      - name: Build unsigned iOS archive
+        run: |
+          xcodebuild \
+            -workspace ios/FoodCheck.xcworkspace \
+            -scheme FoodCheck \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath "$GITHUB_WORKSPACE/build/FoodCheck.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Create unsigned IPA
+        shell: bash
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/ipa/Payload"
+
+          APP_PATH=$(find \
+            "$GITHUB_WORKSPACE/build/FoodCheck.xcarchive/Products/Applications" \
+            -maxdepth 1 \
+            -type d \
+            -name "*.app" \
+            | head -n 1)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "Could not find compiled .app"
+            exit 1
+          fi
+
+          echo "App found at: $APP_PATH"
+
+          cp -R "$APP_PATH" "$GITHUB_WORKSPACE/ipa/Payload/"
+
+          cd "$GITHUB_WORKSPACE/ipa"
+          zip -r "$GITHUB_WORKSPACE/FoodCheck-unsigned.ipa" Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v7
+        with:
+          name: FoodCheck-iOS
+          path: FoodCheck-unsigned.ipa
+          archive: false
+          if-no-files-found: error
