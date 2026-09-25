@@ -7,9 +7,11 @@
     "icon": "./assets/images/icon.png",
     "scheme": "foodcheck",
     "userInterfaceStyle": "automatic",
+
     "ios": {
       "icon": "./assets/expo.icon"
     },
+
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -19,12 +21,20 @@
       },
       "predictiveBackGestureEnabled": false
     },
+
     "web": {
       "output": "server",
       "favicon": "./assets/images/favicon.png"
     },
+
     "plugins": [
       "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "FoodCheck usa la fotocamera per riconoscere gli alimenti."
+        }
+      ],
       [
         "expo-splash-screen",
         {
@@ -34,6 +44,7 @@
         }
       ]
     ],
+
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
