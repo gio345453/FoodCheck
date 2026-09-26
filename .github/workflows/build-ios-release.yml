@@ -1,0 +1,78 @@
+﻿name: FoodCheck iOS Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ios-release:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Generate iOS native project
+        run: npx expo prebuild --platform ios --non-interactive --clean
+
+      - name: Install CocoaPods
+        working-directory: ios
+        run: pod install --repo-update
+
+      - name: Build iOS Release (unsigned)
+        working-directory: ios
+        run: |
+          set -e
+
+          xcodebuild \
+            -workspace FoodCheck.xcworkspace \
+            -scheme FoodCheck \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Package IPA
+        run: |
+          set -e
+
+          APP_PATH="$(find ios/build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -print -quit)"
+
+          if [ -z "$APP_PATH" ]; then
+            echo "ERRORE: FoodCheck.app non trovata."
+            exit 1
+          fi
+
+          rm -rf Payload
+          mkdir Payload
+
+          cp -R "$APP_PATH" Payload/
+
+          rm -f FoodCheck-release-unsigned.ipa
+          cd Payload
+          zip -qry ../FoodCheck-release-unsigned.ipa "$(basename "$APP_PATH")"
+          cd ..
+
+          rm -rf Payload
+
+          echo "IPA creata:"
+          ls -lh FoodCheck-release-unsigned.ipa
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: FoodCheck-iOS-Release
+          path: FoodCheck-release-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7
