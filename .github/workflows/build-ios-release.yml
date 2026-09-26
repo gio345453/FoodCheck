@@ -1,4 +1,4 @@
-﻿name: FoodCheck iOS Release
+name: FoodCheck iOS Release
 
 on:
   workflow_dispatch:
@@ -20,17 +20,32 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
-      - name: Generate iOS native project
+      # expo-dev-client is needed for the development build,
+      # but it must not be part of the standalone release binary.
+      - name: Remove development client for release
+        run: npm uninstall expo-dev-client --no-save --legacy-peer-deps
+
+      - name: Generate clean iOS native project
         run: npx expo prebuild --platform ios --non-interactive --clean
 
       - name: Install CocoaPods
         working-directory: ios
         run: pod install --repo-update
 
+      # Explicitly create the production JS bundle so the app
+      # never needs Metro / a development server.
+      - name: Embed production JavaScript bundle
+        run: npx expo export:embed --platform ios --dev false
+
       - name: Build iOS Release (unsigned)
         working-directory: ios
+        env:
+          SKIP_BUNDLING: ""
+          FORCE_BUNDLING: "1"
         run: |
           set -e
+
+          echo "Building Release with embedded JavaScript bundle..."
 
           xcodebuild \
             -workspace FoodCheck.xcworkspace \
@@ -41,9 +56,11 @@ jobs:
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+            CODE_SIGN_IDENTITY="" \
+            SKIP_BUNDLING="" \
+            FORCE_BUNDLING=1
 
-      - name: Package IPA
+      - name: Verify JavaScript bundle is inside the app
         run: |
           set -e
 
@@ -53,6 +70,21 @@ jobs:
             echo "ERRORE: FoodCheck.app non trovata."
             exit 1
           fi
+
+          if [ ! -f "$APP_PATH/main.jsbundle" ]; then
+            echo "ERRORE: main.jsbundle NON è presente dentro FoodCheck.app"
+            echo "La build non è standalone."
+            exit 1
+          fi
+
+          echo "OK: main.jsbundle presente:"
+          ls -lh "$APP_PATH/main.jsbundle"
+
+      - name: Package IPA
+        run: |
+          set -e
+
+          APP_PATH="$(find ios/build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -print -quit)"
 
           rm -rf Payload
           mkdir Payload
@@ -69,10 +101,10 @@ jobs:
           echo "IPA creata:"
           ls -lh FoodCheck-release-unsigned.ipa
 
-      - name: Upload unsigned IPA
+      - name: Upload standalone IPA
         uses: actions/upload-artifact@v4
         with:
-          name: FoodCheck-iOS-Release
+          name: FoodCheck-iOS-Standalone
           path: FoodCheck-release-unsigned.ipa
           if-no-files-found: error
           retention-days: 7
