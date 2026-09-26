@@ -1,4 +1,4 @@
-name: Build FoodCheck iOS
+name: Build FoodCheck iOS Development
 
 on:
   push:
@@ -12,15 +12,9 @@ jobs:
     runs-on: macos-26-intel
 
     steps:
-      # --------------------------------------------------
-      # 1. Scarica il repository
-      # --------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      # --------------------------------------------------
-      # 2. Controlla ambiente macOS / Xcode
-      # --------------------------------------------------
       - name: Show macOS and Xcode
         run: |
           echo "macOS:"
@@ -30,66 +24,41 @@ jobs:
           echo "Xcode:"
           xcodebuild -version
 
-      # --------------------------------------------------
-      # 3. Node.js
-      # --------------------------------------------------
       - name: Setup Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
 
-      # --------------------------------------------------
-      # 4. Installa dipendenze JavaScript
-      # --------------------------------------------------
       - name: Install dependencies
         run: |
           npm ci --legacy-peer-deps
 
-      # --------------------------------------------------
-      # 5. Genera il progetto iOS
-      # --------------------------------------------------
       - name: Generate iOS native project
         run: |
           npx expo prebuild \
             --platform ios \
-            --non-interactive
+            --non-interactive \
+            --clean
 
-      # --------------------------------------------------
-      # 6. Installa CocoaPods
-      # --------------------------------------------------
       - name: Install CocoaPods
         working-directory: ios
         run: |
           pod install
 
-      # --------------------------------------------------
-      # 7. Mostra la struttura iOS
-      # --------------------------------------------------
       - name: Inspect iOS project
         working-directory: ios
         run: |
-          echo "Files:"
-          ls -la
-
-          echo ""
           echo "Workspace:"
           ls -la *.xcworkspace
 
           echo ""
-          echo "Available schemes:"
+          echo "Schemes:"
           xcodebuild \
             -list \
             -workspace FoodCheck.xcworkspace
 
-      # --------------------------------------------------
-      # 8. Compila l'app iOS
-      #
-      # IMPORTANTE:
-      # niente archive.
-      # Generiamo direttamente FoodCheck.app
-      # --------------------------------------------------
-      - name: Build unsigned iOS app
+      - name: Build development iOS app
         run: |
           set -e
 
@@ -100,7 +69,7 @@ jobs:
           xcodebuild \
             -workspace "$GITHUB_WORKSPACE/ios/FoodCheck.xcworkspace" \
             -scheme "FoodCheck" \
-            -configuration Release \
+            -configuration Debug \
             -sdk iphoneos \
             -destination "generic/platform=iOS" \
             -derivedDataPath "$GITHUB_WORKSPACE/build/DerivedData" \
@@ -109,15 +78,12 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             build
 
-      # --------------------------------------------------
-      # 9. Cerca FoodCheck.app
-      # --------------------------------------------------
-      - name: Locate built .app
+      - name: Locate FoodCheck.app
         shell: bash
         run: |
           set -e
 
-          echo "Searching for .app..."
+          echo "Searching for generated .app..."
 
           find "$GITHUB_WORKSPACE/build/DerivedData" \
             -type d \
@@ -134,25 +100,20 @@ jobs:
             echo ""
             echo "ERROR: FoodCheck.app was not found."
             echo ""
-            echo "All generated .app files:"
             find "$GITHUB_WORKSPACE/build/DerivedData" \
               -type d \
               -name "*.app" \
               -print
-
             exit 1
           fi
 
           echo ""
-          echo "FoodCheck.app found:"
+          echo "Found:"
           echo "$APP_PATH"
 
           echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
 
-      # --------------------------------------------------
-      # 10. Crea IPA unsigned
-      # --------------------------------------------------
-      - name: Create unsigned IPA
+      - name: Create development IPA
         shell: bash
         run: |
           set -e
@@ -161,45 +122,36 @@ jobs:
 
           mkdir -p "$GITHUB_WORKSPACE/ipa/Payload"
 
-          echo "Copying:"
-          echo "$APP_PATH"
-
           cp -R "$APP_PATH" \
             "$GITHUB_WORKSPACE/ipa/Payload/FoodCheck.app"
 
           cd "$GITHUB_WORKSPACE/ipa"
 
           zip -qry \
-            "$GITHUB_WORKSPACE/FoodCheck-unsigned.ipa" \
+            "$GITHUB_WORKSPACE/FoodCheck-development.ipa" \
             Payload
 
           echo ""
           echo "IPA created:"
-          ls -lh "$GITHUB_WORKSPACE/FoodCheck-unsigned.ipa"
+          ls -lh "$GITHUB_WORKSPACE/FoodCheck-development.ipa"
 
-      # --------------------------------------------------
-      # 11. Controlla IPA
-      # --------------------------------------------------
       - name: Verify IPA
         shell: bash
         run: |
           set -e
 
-          test -f "$GITHUB_WORKSPACE/FoodCheck-unsigned.ipa"
+          test -f "$GITHUB_WORKSPACE/FoodCheck-development.ipa"
 
           echo "IPA:"
-          ls -lh "$GITHUB_WORKSPACE/FoodCheck-unsigned.ipa"
+          ls -lh "$GITHUB_WORKSPACE/FoodCheck-development.ipa"
 
           echo ""
           echo "IPA contents:"
-          unzip -l "$GITHUB_WORKSPACE/FoodCheck-unsigned.ipa" | head -50
+          unzip -l "$GITHUB_WORKSPACE/FoodCheck-development.ipa" | head -50
 
-      # --------------------------------------------------
-      # 12. Carica IPA su GitHub
-      # --------------------------------------------------
-      - name: Upload IPA artifact
+      - name: Upload development IPA
         uses: actions/upload-artifact@v7
         with:
-          name: FoodCheck-iOS
-          path: FoodCheck-unsigned.ipa
+          name: FoodCheck-iOS-Development
+          path: FoodCheck-development.ipa
           if-no-files-found: error
