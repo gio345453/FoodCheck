@@ -20,32 +20,57 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
-      # expo-dev-client is needed for the development build,
-      # but it must not be part of the standalone release binary.
-      - name: Remove development client for release
-        run: npm uninstall expo-dev-client --no-save --legacy-peer-deps
+      # Keep expo-dev-client installed for Expo/React Native tooling,
+      # but remove only its config plugin from this Release build.
+      # The repository files are not changed by this CI modification.
+      - name: Prepare standalone Expo config
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+
+          const path = 'app.json';
+          const config = JSON.parse(fs.readFileSync(path, 'utf8'));
+
+          const expo = config.expo ?? {};
+
+          if (Array.isArray(expo.plugins)) {
+            expo.plugins = expo.plugins.filter((plugin) => {
+              if (typeof plugin === 'string') {
+                return plugin !== 'expo-dev-client';
+              }
+
+              if (Array.isArray(plugin)) {
+                return plugin[0] !== 'expo-dev-client';
+              }
+
+              return true;
+            });
+          }
+
+          config.expo = expo;
+          fs.writeFileSync(path, JSON.stringify(config, null, 2) + '\n');
+
+          console.log('Standalone config prepared.');
+          console.log(JSON.stringify(config.expo.plugins ?? [], null, 2));
+          NODE
 
       - name: Generate clean iOS native project
-        run: npx expo prebuild --platform ios --non-interactive --clean
+        env:
+          CI: "1"
+        run: npx expo prebuild --platform ios --clean
 
       - name: Install CocoaPods
         working-directory: ios
         run: pod install --repo-update
 
-      # Explicitly create the production JS bundle so the app
-      # never needs Metro / a development server.
+      # Explicitly embed the production JavaScript bundle.
       - name: Embed production JavaScript bundle
         run: npx expo export:embed --platform ios --dev false
 
       - name: Build iOS Release (unsigned)
         working-directory: ios
-        env:
-          SKIP_BUNDLING: ""
-          FORCE_BUNDLING: "1"
         run: |
           set -e
-
-          echo "Building Release with embedded JavaScript bundle..."
 
           xcodebuild \
             -workspace FoodCheck.xcworkspace \
@@ -57,10 +82,9 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            SKIP_BUNDLING="" \
-            FORCE_BUNDLING=1
+            SKIP_BUNDLING=NO
 
-      - name: Verify JavaScript bundle is inside the app
+      - name: Verify standalone bundle
         run: |
           set -e
 
@@ -71,14 +95,21 @@ jobs:
             exit 1
           fi
 
+          echo "App trovata: $APP_PATH"
+
           if [ ! -f "$APP_PATH/main.jsbundle" ]; then
-            echo "ERRORE: main.jsbundle NON è presente dentro FoodCheck.app"
+            echo "ERRORE: main.jsbundle non presente."
             echo "La build non è standalone."
             exit 1
           fi
 
-          echo "OK: main.jsbundle presente:"
+          echo "OK: JavaScript bundle incorporato."
           ls -lh "$APP_PATH/main.jsbundle"
+
+          if [ -d "$APP_PATH/PlugIns" ]; then
+            echo "PlugIns presenti:"
+            find "$APP_PATH/PlugIns" -maxdepth 2 -type f -name '*.appex' -print || true
+          fi
 
       - name: Package IPA
         run: |
@@ -88,10 +119,10 @@ jobs:
 
           rm -rf Payload
           mkdir Payload
-
           cp -R "$APP_PATH" Payload/
 
           rm -f FoodCheck-release-unsigned.ipa
+
           cd Payload
           zip -qry ../FoodCheck-release-unsigned.ipa "$(basename "$APP_PATH")"
           cd ..
