@@ -20,9 +20,8 @@ jobs:
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
-      # Keep expo-dev-client installed for Expo/React Native tooling,
-      # but remove only its config plugin from this Release build.
-      # The repository files are not changed by this CI modification.
+      # Remove only the expo-dev-client config plugin from the CI copy.
+      # The development project on the user's machine remains unchanged.
       - name: Prepare standalone Expo config
         run: |
           node <<'NODE'
@@ -30,7 +29,6 @@ jobs:
 
           const path = 'app.json';
           const config = JSON.parse(fs.readFileSync(path, 'utf8'));
-
           const expo = config.expo ?? {};
 
           if (Array.isArray(expo.plugins)) {
@@ -50,8 +48,7 @@ jobs:
           config.expo = expo;
           fs.writeFileSync(path, JSON.stringify(config, null, 2) + '\n');
 
-          console.log('Standalone config prepared.');
-          console.log(JSON.stringify(config.expo.plugins ?? [], null, 2));
+          console.log('Standalone Expo config prepared.');
           NODE
 
       - name: Generate clean iOS native project
@@ -63,12 +60,12 @@ jobs:
         working-directory: ios
         run: pod install --repo-update
 
-      # Explicitly embed the production JavaScript bundle.
-      - name: Embed production JavaScript bundle
-        run: npx expo export:embed --platform ios --dev false
-
-      - name: Build iOS Release (unsigned)
+      # Release Xcode builds bundle JavaScript into the app.
+      # FORCE_BUNDLING prevents reliance on a development server.
+      - name: Build iOS Release (unsigned standalone)
         working-directory: ios
+        env:
+          FORCE_BUNDLING: "1"
         run: |
           set -e
 
@@ -81,8 +78,7 @@ jobs:
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            SKIP_BUNDLING=NO
+            CODE_SIGN_IDENTITY=""
 
       - name: Verify standalone bundle
         run: |
@@ -98,18 +94,13 @@ jobs:
           echo "App trovata: $APP_PATH"
 
           if [ ! -f "$APP_PATH/main.jsbundle" ]; then
-            echo "ERRORE: main.jsbundle non presente."
+            echo "ERRORE: main.jsbundle non presente dentro FoodCheck.app"
             echo "La build non è standalone."
             exit 1
           fi
 
-          echo "OK: JavaScript bundle incorporato."
+          echo "OK: main.jsbundle presente."
           ls -lh "$APP_PATH/main.jsbundle"
-
-          if [ -d "$APP_PATH/PlugIns" ]; then
-            echo "PlugIns presenti:"
-            find "$APP_PATH/PlugIns" -maxdepth 2 -type f -name '*.appex' -print || true
-          fi
 
       - name: Package IPA
         run: |
@@ -122,7 +113,6 @@ jobs:
           cp -R "$APP_PATH" Payload/
 
           rm -f FoodCheck-release-unsigned.ipa
-
           cd Payload
           zip -qry ../FoodCheck-release-unsigned.ipa "$(basename "$APP_PATH")"
           cd ..
